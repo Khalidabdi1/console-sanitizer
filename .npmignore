@@ -1,0 +1,8 @@
+src
+*.log
+.git
+.github
+node_modules
+.clearconsole-backup
+tsconfig.json
+.DS_Store
