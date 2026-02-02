@@ -116,13 +116,6 @@ Create `clearconsole.config.json` in your project root:
 - Babel or SWC plugins can remove logs during bundling, but they do not clean the source itself.
 - This tool is for fast, explicit cleanup of your project source when you decide to ship.
 
-## Publishing
-
-```bash
-npm login
-npm run build
-npm publish --access public
-```
 
 ## License
 
