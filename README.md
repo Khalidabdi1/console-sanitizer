@@ -19,7 +19,8 @@ Every team ships with a few stray `console.log`s. This CLI makes cleanup fast, s
 ## Install And Run
 
 ```bash
-npx console-sanitizer
+npm i console-sanitizer
+
 ```
 
 Add a script in your project:
