@@ -48,7 +48,7 @@ interface CliOptions {
 
 interface ScanHit {
   type: ConsoleType;
-  span: { lo: number; hi: number };
+  span: { start: number; end: number } | null;
   directive: Directive;
   shouldRemove: boolean;
 }
@@ -80,16 +80,18 @@ class ConsoleScanVisitor extends Visitor {
   private readonly respectComments: boolean;
   private readonly source: string;
   private readonly lineStarts: number[];
+  private readonly parseBaseOffset: number;
   public readonly hits: ScanHit[] = [];
   public readonly counts: Record<ConsoleType, number> = initCounts();
   public readonly removableCounts: Record<ConsoleType, number> = initCounts();
 
-  constructor(source: string, removeSet: Set<ConsoleType>, respectComments: boolean) {
+  constructor(source: string, removeSet: Set<ConsoleType>, respectComments: boolean, parseBaseOffset: number) {
     super();
     this.source = source;
     this.removeSet = removeSet;
     this.respectComments = respectComments;
     this.lineStarts = buildLineStarts(source);
+    this.parseBaseOffset = parseBaseOffset;
   }
 
   visitTsType(n: any): any {
@@ -99,8 +101,9 @@ class ConsoleScanVisitor extends Visitor {
   visitExpressionStatement(statement: any): any {
     const method = getConsoleMethod(statement.expression);
     if (method) {
-      const directive = this.respectComments ? findInlineDirective(this.source, this.lineStarts, statement.span) : null;
-      const shouldRemove = shouldRemoveConsole(method, directive, this.removeSet);
+      const span = normalizeSpanRange(statement.span, this.source.length, this.parseBaseOffset);
+      const directive = this.respectComments && span ? findInlineDirective(this.source, this.lineStarts, span.end) : null;
+      const shouldRemove = Boolean(span) && shouldRemoveConsole(method, directive, this.removeSet);
 
       this.counts[method] += 1;
       if (shouldRemove) {
@@ -109,7 +112,7 @@ class ConsoleScanVisitor extends Visitor {
 
       this.hits.push({
         type: method,
-        span: { lo: statement.span.lo, hi: statement.span.hi },
+        span,
         directive,
         shouldRemove
       });
@@ -515,7 +518,8 @@ async function scanFiles(files: string[], removeSet: Set<ConsoleType>, respectCo
       console.log(pc.yellow(`Skipping ${path.relative(process.cwd(), filePath)} (parse error).`));
       continue;
     }
-    const visitor = new ConsoleScanVisitor(content, removeSet, respectComments);
+    const parseBaseOffset = getParseBaseOffset(ast);
+    const visitor = new ConsoleScanVisitor(content, removeSet, respectComments, parseBaseOffset);
     visitor.visitProgram(ast as any);
 
     results.push({
@@ -550,10 +554,13 @@ async function applyRemovals(
       console.log(pc.yellow(`Skipping ${path.relative(process.cwd(), filePath)} (parse error).`));
       continue;
     }
-    const visitor = new ConsoleScanVisitor(content, removeSet, respectComments);
+    const parseBaseOffset = getParseBaseOffset(ast);
+    const visitor = new ConsoleScanVisitor(content, removeSet, respectComments, parseBaseOffset);
     visitor.visitProgram(ast as any);
 
-    const ranges = visitor.hits.filter((hit) => hit.shouldRemove).map((hit) => ({ start: hit.span.lo, end: hit.span.hi, type: hit.type }));
+    const ranges = visitor.hits
+      .filter((hit): hit is ScanHit & { span: { start: number; end: number } } => Boolean(hit.shouldRemove && hit.span))
+      .map((hit) => ({ start: hit.span.start, end: hit.span.end, type: hit.type }));
 
     if (ranges.length === 0) {
       for (const type of ALL_TYPES) {
@@ -731,10 +738,46 @@ function buildLineStarts(source: string): number[] {
   return starts;
 }
 
-function findInlineDirective(source: string, lineStarts: number[], span: { hi: number }): Directive {
-  const lineInfo = getLineInfo(source, lineStarts, span.hi);
+function getParseBaseOffset(ast: any): number {
+  const rawStart = toFiniteNumber(ast?.span?.start ?? ast?.span?.lo);
+  if (rawStart === null) {
+    return 0;
+  }
+  return Math.max(0, rawStart - 1);
+}
+
+function normalizeSpanRange(span: any, sourceLength: number, parseBaseOffset: number): { start: number; end: number } | null {
+  if (!span || typeof span !== "object") {
+    return null;
+  }
+
+  const rawStart = toFiniteNumber(span.start ?? span.lo);
+  const rawEnd = toFiniteNumber(span.end ?? span.hi);
+  if (rawStart === null || rawEnd === null) {
+    return null;
+  }
+
+  // SWC byte positions are 1-based and carry a global parser offset.
+  const start = Math.max(0, rawStart - parseBaseOffset - 1);
+  const end = Math.max(start, rawEnd - parseBaseOffset - 1);
+
+  const clampedStart = Math.min(start, sourceLength);
+  const clampedEnd = Math.min(Math.max(end, clampedStart), sourceLength);
+  if (clampedEnd <= clampedStart) {
+    return null;
+  }
+
+  return { start: clampedStart, end: clampedEnd };
+}
+
+function toFiniteNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function findInlineDirective(source: string, lineStarts: number[], spanEnd: number): Directive {
+  const lineInfo = getLineInfo(source, lineStarts, spanEnd);
   const line = source.slice(lineInfo.lineStart, lineInfo.lineEnd);
-  const col = Math.max(0, span.hi - lineInfo.lineStart);
+  const col = Math.max(0, spanEnd - lineInfo.lineStart);
   const trailing = line.slice(col);
 
   const commentStart = findCommentStart(trailing);

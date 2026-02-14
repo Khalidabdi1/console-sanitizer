@@ -1,6 +1,6 @@
 {
   "name": "console-sanitizer",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Interactive CLI to detect, report, and remove console.* statements from JS/TS projects.",
   "bin": {
     "clear-console": "dist/index.js"
