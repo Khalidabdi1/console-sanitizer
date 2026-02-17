@@ -118,6 +118,4 @@ Create `clearconsole.config.json` in your project root:
 - This tool is for fast, explicit cleanup of your project source when you decide to ship.
 
 
-## License
 
-MIT
